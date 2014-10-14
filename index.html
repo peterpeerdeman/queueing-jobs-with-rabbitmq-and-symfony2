@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+
+	<head>
+		<meta charset="utf-8">
+
+		<title>Queueing jobs with RabbitMQ and Symfony2</title>
+
+		<meta name="description" content="Queueing jobs with RabbitMQ and Symfony2">
+		<meta name="author" content="Peter Peerdeman">
+
+		<meta name="apple-mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+		<link rel="stylesheet" href="css/reveal.min.css">
+		<link rel="stylesheet" href="css/theme/pp-reveal.css" id="theme">
+
+		<!-- For syntax highlighting -->
+		<link rel="stylesheet" href="lib/css/googlecode.css">
+
+		<!-- If the query includes 'print-pdf', use the PDF print sheet -->
+		<script>
+			document.write( '<link rel="stylesheet" href="css/print/' + ( window.location.search.match( /print-pdf/gi ) ? 'pdf' : 'paper' ) + '.css" type="text/css" media="print">' );
+		</script>
+
+		<!--[if lt IE 9]>
+		<script src="lib/js/html5shiv.js"></script>
+		<![endif]-->
+	</head>
+
+	<body>
+
+		<div class="reveal">
+
+			<!-- Any section element inside of this container is displayed as a slide -->
+			<div class="slides">
+				<section class="pp-title">
+					<h1>Queueing jobs with RabbitMQ and Symfony2</h1>
+					<h3></h3>
+                    <p>
+                    	<img src="images/peter2.png" alt="">
+                    </p>
+					<p>
+                    	<a href="http://twitter.com/peterpeerdeman">@peterpeerdeman</a>
+                    </p>
+                    <!--<p class="pp-lifelylogo">
+                    	<img src="images/lifelysignature.png" alt="">
+                    </p>-->
+				</section>
+				<section data-background="images/payoff-slide.png">
+				</section>
+				<section>
+                	<h2>Problemspace</h2>
+                	<ul>
+                    	<div class="fragment">
+	                    	<li>API rate limits</li>
+                    	</div>
+                    	<div class="fragment">
+		                    <li>crunching numbers, generate pdfs</li>
+                    	</div>
+                    	<div class="fragment">
+		                    <li>webscraping</li>
+                    	</div>
+                    	<div class="fragment">
+		                    <li>html fragment creation</li>
+                    	</div>
+                    </ul>
+				</section>
+				<section>
+					<h2>RabbitMQ</h2>
+					<blockquote>"RabbitMQ is a complete and highly reliable enterprise messaging system based on the emerging AMQP standard."</blockquote>
+				</section>
+				
+				<section>
+                    <h2>RabbitMQ Ansible</h2>
+                	<pre>
+                		<code class="ruby" data-trim>
+---
+- name: rabbitmq | add repository
+  shell: echo 'deb http://www.rabbitmq.com/debian/ testing main' > /etc/apt/sources.list.d/rabbitmq.list creates=/etc/apt/sources.list.d/rabbitmq.list
+
+- name: rabbitmq | download key
+  get_url: url=http://www.rabbitmq.com/rabbitmq-signing-key-public.asc dest=/tmp/rabbitmq-signing-key-public.asc
+
+- name: rabbitmq | add key
+  sudo: yes
+  command: apt-key add /tmp/rabbitmq-signing-key-public.asc
+
+- name: rabbitmq | update apt
+  sudo: yes
+  apt:  update_cache=yes
+
+- name: rabbitmq | install
+  sudo: yes
+  apt:  package=rabbitmq-server state=latest
+
+- name: rabbitmq | enable plugins
+  shell: rabbitmq-plugins enable rabbitmq_management
+
+- name: rabbitmq | add admin user
+  shell: rabbitmqctl add_user admin password
+  ignore_errors: true
+
+- name: rabbitmq | set admin tags
+  shell: rabbitmqctl set_user_tags admin administrator
+  ignore_errors: true
+
+- name: rabbitmq | set admin permissions
+  shell: rabbitmqctl set_permissions -p / admin ".*" ".*" ".*"
+  ignore_errors: true
+
+- name: rabbitmq | delete guest user
+  shell: rabbitmqctl delete_user guest
+  notify: rabbitmq | restart
+  ignore_errors: true
+    					</code>
+    				</pre>
+				</section>
+				<section>
+                    <h2>JobProducer</h2>
+                    <pre>
+                    	<code class="php">
+class FacebookJobProducer {    
+    private $sharesproducer;
+
+    public function __construct(Producer $sharesproducer) {
+        $this->sharesproducer = $sharesproducer;
+    }
+
+    public function queueFacebookShares($user, $lastupdate) {
+        $message = array(
+            'user_id' => $user->getId(),
+            'lastupdate' => $lastupdate
+        );
+        
+        $this->sharesproducer->publish(serialize($message));
+    }
+}
+    					</code>
+    				</pre>
+				</section>
+				<section>
+                    <h2>JobConsumer</h2>
+                    <pre>
+                    	<code class="php">
+class FacebookJobConsumer {    
+    private $em;
+    private $shareupdateservice;
+
+    public function __construct(EntityManager $entityManager, $shareupdateservice) {
+        $this->em = $entityManager;
+        $this->shareupdateservice = $shareupdateservice;
+    }
+
+    public function execute(AMQPMessage $msg) {
+        $message = unserialize($msg->body);
+
+        switch($msg->delivery_info['exchange']) {
+            ...
+            case 'shares':
+                $this->processShares($message);
+                break;
+        }
+
+    }
+
+    private function processShares($message) {
+        $user = $this->em->getRepository('LifelyTFSSiteBundle:User')->findOneById($message['user_id']);
+        $this->shareupdateservice->updateShares($user, $message['lastupdate']);
+    }
+    					</code>
+    				</pre>
+				</section>
+				<section>
+                    <h2>RabbitMQ config</h2>
+                    <pre>
+                    	<code class="ruby">
+old_sound_rabbit_mq:
+    connections:
+        default:
+            host:     "%rabbitmq_host%"
+            port:     "%rabbitmq_port%"
+            user:     "%rabbitmq_user%"
+            password: "%rabbitmq_password%"
+            vhost:    "%rabbitmq_vhost%"
+            lazy:     true
+    producers:
+        shares:
+            connection:       default
+            exchange_options: 
+                name: 'shares'
+                type: direct 
+    consumers:
+        shares:
+            connection:       default
+            exchange_options: { name: 'shares', type: direct }
+            queue_options:    { name: 'shares' }
+            callback:         tfs.consumer.facebookjob
+            idle_timeout:     5
+    					</code>
+    				</pre>
+				</section>
+				<section data-background="images/rabbitmq-console-1.png">
+				</section>
+				<section data-background="images/rabbitmq-console-2.png">
+				</section>
+				<section>
+                    <h2>RabbitMQ REST API</h2>
+                    <pre>
+                    	<code class="javascript">
+[{
+    "memory": 1038768,
+    "message_stats": {
+        "ack": 4816716,
+        "ack_details": {
+            "rate": 0
+        },
+        "deliver": 9460951,
+        "deliver_details": {
+            "rate": 0
+        },
+        "deliver_get": 9460951,
+        "deliver_get_details": {
+            "rate": 0
+        },
+        "publish": 4817957,
+        "publish_details": {
+            "rate": 0
+        },
+        "redeliver": 4644385,
+        "redeliver_details": {
+            "rate": 0
+        }
+    },
+    "messages": 1391,
+    "messages_details": {
+        "rate": 0
+    },
+    "messages_ready": 1391,
+    "messages_ready_details": {
+        "rate": 0
+    },
+    "messages_unacknowledged": 0,
+    "messages_unacknowledged_details": {
+        "rate": 0
+    },
+    "idle_since": "2014-10-14 23:46:05",
+    "consumer_utilisation": "",
+    "policy": "",
+    "exclusive_consumer_tag": "",
+    "consumers": 0,
+    "backing_queue_status": {
+        "q1": 0,
+        "q2": 0,
+        "delta": ["delta", "undefined", 0, "undefined"],
+        "q3": 0,
+        "q4": 1391,
+        "len": 1391,
+        "pending_acks": 0,
+        "target_ram_count": "infinity",
+        "ram_msg_count": 1391,
+        "ram_ack_count": 0,
+        "next_seq_id": 15680549,
+        "persistent_count": 1391,
+        "avg_ingress_rate": 162.49305731486965,
+        "avg_egress_rate": 8.60980992660947e-21,
+        "avg_ack_ingress_rate": 8.60980992660947e-21,
+        "avg_ack_egress_rate": 1.427091082672728e-13
+    },
+    "state": "running",
+    "name": "sharelikes",
+    "vhost": "tfs",
+    "durable": true,
+    "auto_delete": false,
+    "arguments": {},
+    "node": "rabbit@lfy-production"
+}, {
+    ...
+}]
+    					</code>
+    				</pre>
+				</section>
+				<section data-background="images/dashboard-1.png">
+				</section>
+				<section>
+                	<h2>Findings</h2>
+                	<ul>
+                    	<div class="fragment">
+	                    	<li>featurecomplete (dashboard, api, exchanges)</li>
+                    	</div>
+                    	<div class="fragment">
+		                    <li>advocates application modularisation</li>
+                    	</div>
+                    	<div class="fragment">
+		                    <li>extra moving element in stack</li>
+                    	</div>
+                    	<div class="fragment">
+		                    <li>configuration overhead</li>
+                    	</div>
+                    </ul>
+				</section>
+				<section class="pp-title">
+					<h1>Queueing jobs with RabbitMQ and Symfony2</h1>
+					<h3></h3>
+                    <p>
+                    	<img src="images/peter2.png" alt="">
+                    </p>
+					<p>
+                    	<a href="http://twitter.com/peterpeerdeman">@peterpeerdeman</a>
+                    </p>
+                    <!--<p class="pp-lifelylogo">
+                    	<img src="images/lifelysignature.png" alt="">
+                    </p>-->
+				</section>
+			</div>
+
+		</div>
+
+		<script src="lib/js/head.min.js"></script>
+		<script src="js/reveal.min.js"></script>
+
+		<script>
+
+			// Full list of configuration options available here:
+			// https://github.com/hakimel/reveal.js#configuration
+			Reveal.initialize({
+				controls: true,
+				progress: true,
+				history: true,
+				center: true,
+				theme: Reveal.getQueryHash().theme, // available themes are in /css/theme
+				transition: Reveal.getQueryHash().transition || 'linear', // default/cube/page/concave/zoom/linear/fade/none
+
+				// Optional libraries used to extend on reveal.js
+				dependencies: [
+					{ src: 'lib/js/classList.js', condition: function() { return !document.body.classList; } },
+					{ src: 'plugin/markdown/marked.js', condition: function() { return !!document.querySelector( '[data-markdown]' ); } },
+					{ src: 'plugin/markdown/markdown.js', condition: function() { return !!document.querySelector( '[data-markdown]' ); } },
+					{ src: 'plugin/highlight/highlight.js', async: true, callback: function() { hljs.initHighlightingOnLoad(); } },
+					{ src: 'plugin/zoom-js/zoom.js', async: true, condition: function() { return !!document.body.classList; } },
+					{ src: 'plugin/notes/notes.js', async: true, condition: function() { return !!document.body.classList; } }
+				]
+			});
+
+		</script>
+
+	</body>
+</html>
