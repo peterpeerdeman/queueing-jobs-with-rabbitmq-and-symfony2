@@ -52,14 +52,17 @@
 				<section data-background="images/payoff-slide.png">
 				</section>
 				<section>
-                	<h2>Problemspace</h2>
+                	<h2>Problem space</h2>
                 	<ul>
                     	<div class="fragment">
 	                    	<li>API rate limits</li>
                     	</div>
                     	<div class="fragment">
-		                    <li>crunching numbers, generate pdfs</li>
+		                    <li>crunching numbers</li>
                     	</div>
+                        <div class="fragment">
+                            <li>generate PDFs</li>
+                        </div>
                     	<div class="fragment">
 		                    <li>webscraping</li>
                     	</div>
@@ -72,7 +75,7 @@
 					<h2>RabbitMQ</h2>
 					<blockquote>"RabbitMQ is a complete and highly reliable enterprise messaging system based on the emerging AMQP standard."</blockquote>
 				</section>
-				
+			
 				<section>
                     <h2>RabbitMQ Ansible</h2>
                 	<pre>
@@ -118,6 +121,37 @@
     					</code>
     				</pre>
 				</section>
+                <section>
+                    <pre>
+                        <code class="php">
+public function updateFacebookShares() {
+    $lastupdate = $this->findLastUpdateTimestampForType('shares');
+    $users = $this->em->getRepository('LifelyBundle:User')->findAllEnabledUsers();
+
+    foreach($users as $user) {
+        //fetch facebook posts since last update
+        $this->shareupdateservice->updateShares($user, $lastupdate);
+    }
+}
+                        </code>
+                    </pre>
+                    <div class="fragment">
+                        <pre>
+                            <code class="php">
+public function updateFacebookShares() {
+    $lastupdate = $this->findLastUpdateTimestampForType('shares');
+    $users = $this->em->getRepository('LifelyBundle:User')->findAllEnabledUsers();
+
+    foreach($users as $user) {
+        //queue retrieval of facebook posts since last update
+        $this->facebookjobproducer->queueFacebookShares($user, $lastupdate);
+    }
+}
+                            </code>
+                        </pre>
+                    </div>
+                </section>
+                
 				<section>
                     <h2>JobProducer</h2>
                     <pre>
@@ -138,7 +172,7 @@ class FacebookJobProducer {
         $this->sharesproducer->publish(serialize($message));
     }
 }
-    					</code>
+                        </code>
     				</pre>
 				</section>
 				<section>
@@ -158,7 +192,6 @@ class FacebookJobConsumer {
         $message = unserialize($msg->body);
 
         switch($msg->delivery_info['exchange']) {
-            ...
             case 'shares':
                 $this->processShares($message);
                 break;
@@ -288,17 +321,20 @@ old_sound_rabbit_mq:
                 	<h2>Findings</h2>
                 	<ul>
                     	<div class="fragment">
-	                    	<li>featurecomplete (dashboard, api, exchanges)</li>
-                    	</div>
-                    	<div class="fragment">
-		                    <li>advocates application modularisation</li>
-                    	</div>
-                    	<div class="fragment">
 		                    <li>extra moving element in stack</li>
                     	</div>
                     	<div class="fragment">
 		                    <li>configuration overhead</li>
                     	</div>
+                        <div class="fragment">
+                            <li>lightweight alternatives (JMSJobQueueBundle / ZeroMQ)</li>
+                        </div>
+                        <div class="fragment">
+                            <li>feature complete (dashboard, api, exchanges)</li>
+                        </div>
+                        <div class="fragment">
+                            <li>advocates application modularisation</li>
+                        </div>
                     </ul>
 				</section>
 				<section class="pp-title">
