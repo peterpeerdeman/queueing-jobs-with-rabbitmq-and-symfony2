@@ -81,6 +81,11 @@ body {
   line-height: 1.05em;
 }
 
+.reveal h2 {
+    font-size:2em;
+    color: rgb(159,166,179);
+}
+
 .pp-title h1 {
   font-size:3em;
   font-family:FuturaStd-Heavy;
